@@ -71,6 +71,14 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 		)
 	}
 
+	if order.BrokerOrderID != "broker-order-001" {
+		t.Fatalf(
+			"expected broker order ID %q, got %q",
+			"broker-order-001",
+			order.BrokerOrderID,
+		)
+	}
+
 	if len(store.updates) != 2 {
 		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
 	}
@@ -88,6 +96,14 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 			"expected second stored status %s, got %s",
 			trading.OrderAcknowledged,
 			store.updates[1].Status,
+		)
+	}
+
+	if store.updates[1].BrokerOrderID != "broker-order-001" {
+		t.Fatalf(
+			"expected stored broker order ID %q, got %q",
+			"broker-order-001",
+			store.updates[1].BrokerOrderID,
 		)
 	}
 }
@@ -125,6 +141,13 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 			"expected status %s, got %s",
 			trading.OrderUnknown,
 			order.Status,
+		)
+	}
+
+	if order.BrokerOrderID != "" {
+		t.Fatalf(
+			"expected broker order ID to remain empty, got %q",
+			order.BrokerOrderID,
 		)
 	}
 
@@ -220,6 +243,13 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 			"expected status %s, got %s",
 			trading.OrderUnknown,
 			order.Status,
+		)
+	}
+
+	if order.BrokerOrderID != "" {
+		t.Fatalf(
+			"expected broker order ID to remain empty, got %q",
+			order.BrokerOrderID,
 		)
 	}
 

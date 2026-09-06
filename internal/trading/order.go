@@ -19,6 +19,7 @@ type Order struct {
 	SignalID        string
 	AccountID       string
 	BrokerAccountID string
+	BrokerOrderID   string
 	Symbol          string
 	Side            Side
 	Quantity        int64

@@ -51,6 +51,8 @@ func (c Coordinator) Submit(
 		return err
 	}
 
+	order.BrokerOrderID = result.OrderID
+
 	if err := trading.TransitionOrder(
 		order,
 		result.Status,
