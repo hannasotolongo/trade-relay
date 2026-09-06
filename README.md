@@ -1,11 +1,11 @@
-cat > README.md <<'EOF'
-# Pulse — Real-Time Trading Execution & Copy-Trading Platform
+# TradeRelay — Real-Time Trading Execution & Copy-Trading Platform
 
-Pulse is a Go-based backend systems project exploring the engineering challenges behind real-time trading infrastructure, broker integrations, copy-trading workflows, and reliable execution.
+TradeRelay is a Go-based backend system for exploring the infrastructure behind real-time trade execution, broker integrations, and multi-account copy-trading workflows.
 
-The project is built around a practical systems question:
+The project is centered on a practical systems problem:
 
-> **How can a trading platform coordinate execution across many accounts while preserving correctness under retries, partial fills, failures, and changing account state?**
+> **How can a trading platform coordinate execution across multiple accounts while maintaining correctness under concurrency, retries, partial fills, timeouts, and failures?**
+
 
 ## Architecture
 
@@ -16,7 +16,7 @@ Strategy Signal
 Signal Validation
       |
       v
-Risk & Account Checks
+Account & Risk Checks
       |
       v
 Copy-Trade Allocation
@@ -25,7 +25,7 @@ Copy-Trade Allocation
 Execution Coordinator
       |
       v
-Broker Adapter
+Broker Adapter Layer
       |
       v
 Orders / Fills / Rejections
@@ -33,78 +33,134 @@ Orders / Fills / Rejections
       v
 Position Reconciliation
       |
-      +------------------+
-      |                  |
-      v                  v
-   REST API       WebSocket Updates
+      +--------------------+
+      |                    |
+      v                    v
+   REST API         WebSocket Updates
 ```
 
-## Engineering Focus
+## Why This Is a Systems Problem
 
-Pulse is designed around backend problems that occur in financial systems:
+Executing one order is relatively simple. Coordinating execution across many accounts becomes more difficult once concurrency and external systems are involved.
 
-- concurrent execution across multiple accounts
-- proportional copy-trade allocation
-- broker API abstraction
-- order lifecycle management
-- partial fills and rejected orders
-- idempotent request handling
-- retries and timeout recovery
-- transactional state management
-- position and execution reconciliation
-- real-time event delivery
-- auditability and event history
-- backpressure and overload behavior
-- observability and health monitoring
-- latency and throughput measurement
+A single strategy signal may need to produce orders for many follower accounts, each with different balances, allocation percentages, positions, and risk limits.
 
-## Execution Model
+Execution can also fail in ambiguous ways. A broker request may time out even though the broker accepted the order. One account may receive a full fill while another receives a partial fill or rejection. Execution events may arrive late or out of order. The service may restart while orders remain unresolved.
 
-A strategy produces a trading signal:
+TradeRelay is designed around handling these conditions safely rather than assuming the execution path always succeeds.
 
-```text
-BUY AAPL
-```
-
-Pulse validates the signal and determines which follower accounts are eligible to participate.
-
-Each account may have a different balance, allocation percentage, exposure, or risk limit. The allocation engine calculates account-specific orders before the execution coordinator submits them through a broker adapter.
-
-The system is designed around the fact that execution is imperfect.
-
-A broker request may time out after the broker already accepted the order. One account may receive a partial fill while another is rejected. Execution events may arrive asynchronously or out of order. A service may restart while orders remain unresolved.
-
-Pulse treats these conditions as normal distributed-system behavior rather than exceptional edge cases.
-
-## Planned Components
+## Core Components
 
 ### Signal Service
 
-Receives and validates incoming strategy signals while preventing duplicate signal processing.
+Receives strategy signals, validates required fields, and rejects malformed or duplicate signals before they enter the execution pipeline.
 
 ### Account & Risk Layer
 
-Maintains follower account state and applies eligibility, allocation, and exposure constraints before execution.
+Maintains follower account state and evaluates whether an account is eligible to participate in an execution based on configurable allocation and exposure constraints.
 
 ### Allocation Engine
 
-Transforms one strategy signal into account-specific execution intents according to follower configuration and available account state.
+Transforms a single strategy signal into account-specific execution intents.
+
+For example:
+
+```text
+Strategy Signal: BUY AAPL
+
+Follower A → 100 shares
+Follower B → 40 shares
+Follower C → not eligible
+```
+
+Allocation decisions can depend on account configuration, available capital, allocation percentage, and risk limits.
 
 ### Execution Coordinator
 
-Coordinates order submission, tracks execution state, handles timeouts, and prevents duplicate broker actions.
+Coordinates account-specific orders and tracks their lifecycle through submission, acknowledgement, execution, rejection, and recovery.
+
+The coordinator is responsible for preventing duplicate broker actions and maintaining consistent execution state.
 
 ### Broker Adapter Layer
 
-Provides a stable internal interface around broker-specific APIs. Simulated brokers will initially allow latency, rejection, timeout, and partial-fill behavior to be tested deterministically.
+Provides a stable internal interface around broker-specific APIs.
+
+```text
+Execution Coordinator
+        |
+        v
+    Broker Interface
+      /     |      \
+     v      v       v
+ Broker A Broker B Simulator
+```
+
+Initial development uses deterministic broker simulators so latency, rejection, timeout, and partial-fill scenarios can be reproduced safely.
 
 ### Reconciliation Engine
 
-Compares internal order and position state against broker-reported state and identifies inconsistencies requiring recovery.
+Compares TradeRelay's internal order and position state against broker-reported state.
+
+Reconciliation is particularly important when a request produces an ambiguous result—for example, when the broker accepts an order but the network response is lost.
 
 ### API & Real-Time Layer
 
-Exposes signals, accounts, executions, orders, positions, and system health through REST APIs and WebSocket updates.
+REST endpoints expose platform state and execution operations, while WebSocket connections provide real-time order, fill, and position updates to operational clients.
+
+## Execution Lifecycle
+
+```text
+Signal Received
+      |
+      v
+Validated
+      |
+      v
+Accounts Selected
+      |
+      v
+Allocation Calculated
+      |
+      v
+Orders Created
+      |
+      v
+Broker Submission
+      |
+      +------> Rejected
+      |
+      +------> Partial Fill
+      |
+      +------> Filled
+      |
+      +------> Unknown / Timeout
+                    |
+                    v
+               Reconciliation
+```
+
+The `Unknown / Timeout` state is important. A timeout does not necessarily mean an order failed. Blindly retrying an ambiguous request could result in duplicate execution.
+
+TradeRelay therefore treats **idempotency, durable state, and reconciliation** as core execution requirements.
+
+## Reliability Model
+
+The system is designed to test failure scenarios including:
+
+* duplicate signal delivery
+* concurrent duplicate requests
+* broker timeouts
+* partial fills
+* rejected orders
+* delayed broker responses
+* out-of-order execution events
+* service restart during active execution
+* database failures
+* slow downstream consumers
+* burst traffic
+* broker/internal state disagreement
+
+Correctness takes priority over raw throughput. Performance optimization is introduced only after execution state and recovery behavior are deterministic and tested.
 
 ## Data Model
 
@@ -117,7 +173,7 @@ Signal
    v
 Execution
    |
-   +----> Allocation ----> Account
+   +------> Allocation ------> Account
    |
    v
 Order
@@ -129,78 +185,134 @@ Fill
 Position
 ```
 
-## Correctness & Failure Scenarios
+Each layer represents a different responsibility.
 
-Pulse will explicitly test:
+A signal represents strategy intent. An execution represents TradeRelay's attempt to realize that intent. Allocations determine account participation. Orders represent broker-facing actions. Fills represent actual execution results, and positions represent the resulting account state.
 
-- duplicate signal delivery
-- concurrent duplicate requests
-- broker timeouts
-- partial fills
-- rejected orders
-- delayed execution events
-- out-of-order events
-- process failure during execution
-- database failures
-- slow downstream consumers
-- burst traffic
-- disagreement between broker and internal state
+## Concurrency & Idempotency
 
-A central design principle is that **execution correctness takes priority over raw throughput**. Optimization will be introduced only after baseline state transitions and recovery behavior are measurable and tested.
+Trading infrastructure receives concurrent requests and cannot assume messages arrive exactly once.
+
+TradeRelay therefore uses synchronization and idempotency controls around shared state and external execution boundaries.
+
+For example, if two requests containing the same signal arrive simultaneously:
+
+```text
+Request A ----\
+               ---> TradeRelay ---> one execution
+Request B ----/
+```
+
+the system should create only one logical execution.
+
+Concurrency tests and Go's race detector are used to verify that shared-state behavior remains safe under simultaneous access.
 
 ## Technology
 
-- **Go** — primary backend implementation
-- **MySQL** — persistent transactional state
-- **REST APIs** — platform integrations
-- **WebSockets** — real-time execution updates
-- **Docker** — reproducible deployment
-- **Go concurrency primitives** — concurrent execution workflows
-- **Structured logging and metrics** — operational visibility
+**Backend**
 
-Infrastructure and frontend components will be added only where they support the backend system.
+* Go
+* Go standard library
+* REST APIs
+* WebSockets
+
+**Data**
+
+* MySQL
+* transactional persistence
+* schema migrations
+
+**Infrastructure**
+
+* Docker
+* health endpoints
+* structured logging
+* metrics
+
+**Testing**
+
+* Go unit tests
+* concurrency tests
+* race detection
+* integration tests
+* failure injection
+* load testing
+
+Additional infrastructure will be introduced only when it supports a concrete systems requirement.
 
 ## Evaluation
 
-Performance and reliability claims will be based on measured behavior.
+TradeRelay will be evaluated using measured behavior rather than theoretical performance claims.
 
-Planned evaluation includes:
+Planned measurements include:
 
-- request throughput
-- execution throughput
-- p50 / p95 / p99 latency
-- allocation latency as follower count increases
-- duplicate-request behavior
-- broker failure recovery
-- burst-load behavior
-- reconciliation accuracy
-- concurrent execution correctness
+* request throughput
+* execution throughput
+* p50 / p95 / p99 latency
+* allocation latency as follower count increases
+* concurrent duplicate-request behavior
+* broker timeout recovery
+* reconciliation correctness
+* burst-load behavior
+* database contention
+* recovery after process failure
 
-Go's race detector and concurrency tests will also be used to identify unsafe shared-state behavior.
+Performance results will be documented alongside the workload and environment used to produce them.
 
 ## Current Status
 
 **Early development.**
 
-Currently implemented:
+Implemented:
 
-- Go project structure
-- trading signal domain model
-- BUY/SELL type constraints
-- signal validation
-- validation unit tests
-- concurrency-safe in-memory signal storage
-- duplicate signal detection
+* Go project structure
+* trading signal domain model
+* BUY/SELL signal types
+* signal validation
+* validation unit tests
+* concurrency-safe in-memory signal storage
+* duplicate signal detection
 
-Current development is focused on testing concurrent signal ingestion before introducing account allocation and execution state.
+Current development is focused on concurrency testing and idempotent signal ingestion before introducing follower accounts and allocation.
 
-## Development Principles
+## Development Roadmap
 
-1. Correctness before optimization.
-2. Explicit state transitions.
-3. Idempotency at external boundaries.
-4. Broker APIs are unreliable boundaries.
-5. Persistent state remains authoritative.
-6. Failures should be reproducible in tests.
-7. Performance claims require measurement.
+```text
+Signal Model & Validation
+          |
+          v
+Idempotent Signal Storage
+          |
+          v
+Account Model
+          |
+          v
+Copy-Trade Allocation
+          |
+          v
+Execution State Machine
+          |
+          v
+Broker Adapter
+          |
+          v
+Failure & Retry Handling
+          |
+          v
+MySQL Persistence
+          |
+          v
+Reconciliation
+          |
+          v
+REST / WebSocket APIs
+          |
+          v
+Observability
+          |
+          v
+Load & Failure Evaluation
+```
+
+
 
