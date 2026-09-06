@@ -8,33 +8,35 @@ import (
 	"github.com/hannasotolongo/trade-relay/internal/trading"
 )
 
-func TestSimulatedBrokerReturnsConfiguredResult(t *testing.T) {
+func TestSimulatedBrokerSubmitOrderReturnsConfiguredResult(t *testing.T) {
+	expected := trading.BrokerResult{
+		OrderID:        "broker-order-001",
+		Status:         trading.OrderAcknowledged,
+		FilledQuantity: 0,
+	}
+
 	b := SimulatedBroker{
-		Result: trading.BrokerResult{
-			OrderID: "broker-order-001",
-			Status:  trading.OrderAcknowledged,
-		},
+		Result: expected,
 	}
 
 	result, err := b.SubmitOrder(
 		context.Background(),
-		trading.Order{ID: "order-001"},
+		trading.Order{
+			ID:     "order-001",
+			Status: trading.OrderSubmitting,
+		},
 	)
 	if err != nil {
 		t.Fatalf("submit order: %v", err)
 	}
 
-	if result.OrderID != "broker-order-001" {
-		t.Fatalf("expected broker order ID %q, got %q", "broker-order-001", result.OrderID)
-	}
-
-	if result.Status != trading.OrderAcknowledged {
-		t.Fatalf("expected status %s, got %s", trading.OrderAcknowledged, result.Status)
+	if result != expected {
+		t.Fatalf("expected %+v, got %+v", expected, result)
 	}
 }
 
-func TestSimulatedBrokerReturnsConfiguredError(t *testing.T) {
-	expectedErr := errors.New("broker unavailable")
+func TestSimulatedBrokerSubmitOrderReturnsConfiguredError(t *testing.T) {
+	expectedErr := errors.New("submit failed")
 
 	b := SimulatedBroker{
 		Err: expectedErr,
@@ -42,7 +44,7 @@ func TestSimulatedBrokerReturnsConfiguredError(t *testing.T) {
 
 	_, err := b.SubmitOrder(
 		context.Background(),
-		trading.Order{ID: "order-001"},
+		trading.Order{},
 	)
 
 	if !errors.Is(err, expectedErr) {
@@ -50,20 +52,69 @@ func TestSimulatedBrokerReturnsConfiguredError(t *testing.T) {
 	}
 }
 
-func TestSimulatedBrokerRespectsCanceledContext(t *testing.T) {
+func TestSimulatedBrokerSubmitOrderRespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	b := SimulatedBroker{
-		Result: trading.BrokerResult{
-			OrderID: "broker-order-001",
-			Status:  trading.OrderAcknowledged,
-		},
+	b := SimulatedBroker{}
+
+	_, err := b.SubmitOrder(ctx, trading.Order{})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestSimulatedBrokerGetOrderReturnsConfiguredResult(t *testing.T) {
+	expected := trading.BrokerResult{
+		OrderID:        "broker-order-001",
+		Status:         trading.OrderPartiallyFilled,
+		FilledQuantity: 40,
 	}
 
-	_, err := b.SubmitOrder(
+	b := SimulatedBroker{
+		GetResult: expected,
+	}
+
+	result, err := b.GetOrder(
+		context.Background(),
+		"broker-order-001",
+	)
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	if result != expected {
+		t.Fatalf("expected %+v, got %+v", expected, result)
+	}
+}
+
+func TestSimulatedBrokerGetOrderReturnsConfiguredError(t *testing.T) {
+	expectedErr := errors.New("lookup failed")
+
+	b := SimulatedBroker{
+		GetErr: expectedErr,
+	}
+
+	_, err := b.GetOrder(
+		context.Background(),
+		"broker-order-001",
+	)
+
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("expected %v, got %v", expectedErr, err)
+	}
+}
+
+func TestSimulatedBrokerGetOrderRespectsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	b := SimulatedBroker{}
+
+	_, err := b.GetOrder(
 		ctx,
-		trading.Order{ID: "order-001"},
+		"broker-order-001",
 	)
 
 	if !errors.Is(err, context.Canceled) {

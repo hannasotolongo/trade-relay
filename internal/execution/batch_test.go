@@ -200,3 +200,16 @@ func (successfulBatchBroker) SubmitOrder(
 		Status:  trading.OrderAcknowledged,
 	}, nil
 }
+func (successfulBatchBroker) GetOrder(
+	ctx context.Context,
+	brokerOrderID string,
+) (trading.BrokerResult, error) {
+	if err := ctx.Err(); err != nil {
+		return trading.BrokerResult{}, err
+	}
+
+	return trading.BrokerResult{
+		OrderID: brokerOrderID,
+		Status:  trading.OrderAcknowledged,
+	}, nil
+}

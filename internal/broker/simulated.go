@@ -7,8 +7,10 @@ import (
 )
 
 type SimulatedBroker struct {
-	Result trading.BrokerResult
-	Err    error
+	Result    trading.BrokerResult
+	Err       error
+	GetResult trading.BrokerResult
+	GetErr    error
 }
 
 func (b SimulatedBroker) SubmitOrder(
@@ -24,4 +26,19 @@ func (b SimulatedBroker) SubmitOrder(
 	}
 
 	return b.Result, nil
+}
+
+func (b SimulatedBroker) GetOrder(
+	ctx context.Context,
+	brokerOrderID string,
+) (trading.BrokerResult, error) {
+	if err := ctx.Err(); err != nil {
+		return trading.BrokerResult{}, err
+	}
+
+	if b.GetErr != nil {
+		return trading.BrokerResult{}, b.GetErr
+	}
+
+	return b.GetResult, nil
 }
