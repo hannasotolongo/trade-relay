@@ -96,3 +96,67 @@ func TestCalculateRejectsInvalidAccount(t *testing.T) {
 		t.Fatalf("expected ErrInvalidAllocationBps, got %v", err)
 	}
 }
+func TestCalculateManyHandlesPartialSuccess(t *testing.T) {
+	signal := testSignal(100)
+
+	accounts := []trading.Account{
+		{
+			ID:               "acct-001",
+			BrokerAccountID:  "broker-001",
+			Status:           trading.AccountActive,
+			CashBalanceCents: 1_000_000,
+			AllocationBps:    5000,
+			MaxPositionCents: 300_000,
+		},
+		{
+			ID:               "acct-002",
+			BrokerAccountID:  "broker-002",
+			Status:           trading.AccountDisabled,
+			CashBalanceCents: 1_000_000,
+			AllocationBps:    2500,
+			MaxPositionCents: 300_000,
+		},
+		{
+			ID:               "acct-003",
+			BrokerAccountID:  "broker-003",
+			Status:           trading.AccountActive,
+			CashBalanceCents: 1_000_000,
+			AllocationBps:    1000,
+			MaxPositionCents: 300_000,
+		},
+	}
+
+	result := CalculateMany(signal, accounts)
+
+	if len(result.Allocations) != 2 {
+		t.Fatalf("expected 2 successful allocations, got %d", len(result.Allocations))
+	}
+
+	if len(result.Failures) != 1 {
+		t.Fatalf("expected 1 failure, got %d", len(result.Failures))
+	}
+
+	if result.Allocations[0].AccountID != "acct-001" {
+		t.Fatalf("expected first allocation for acct-001, got %q", result.Allocations[0].AccountID)
+	}
+
+	if result.Allocations[0].Quantity != 50 {
+		t.Fatalf("expected acct-001 quantity 50, got %d", result.Allocations[0].Quantity)
+	}
+
+	if result.Allocations[1].AccountID != "acct-003" {
+		t.Fatalf("expected second allocation for acct-003, got %q", result.Allocations[1].AccountID)
+	}
+
+	if result.Allocations[1].Quantity != 10 {
+		t.Fatalf("expected acct-003 quantity 10, got %d", result.Allocations[1].Quantity)
+	}
+
+	if result.Failures[0].AccountID != "acct-002" {
+		t.Fatalf("expected failure for acct-002, got %q", result.Failures[0].AccountID)
+	}
+
+	if !errors.Is(result.Failures[0].Err, ErrAccountNotActive) {
+		t.Fatalf("expected ErrAccountNotActive, got %v", result.Failures[0].Err)
+	}
+}

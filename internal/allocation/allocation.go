@@ -44,3 +44,32 @@ func Calculate(signal trading.Signal, account trading.Account) (Allocation, erro
 		Quantity:  quantity,
 	}, nil
 }
+
+type Failure struct {
+	AccountID string
+	Err       error
+}
+
+type Result struct {
+	Allocations []Allocation
+	Failures    []Failure
+}
+
+func CalculateMany(signal trading.Signal, accounts []trading.Account) Result {
+	result := Result{}
+
+	for _, account := range accounts {
+		allocation, err := Calculate(signal, account)
+		if err != nil {
+			result.Failures = append(result.Failures, Failure{
+				AccountID: account.ID,
+				Err:       err,
+			})
+			continue
+		}
+
+		result.Allocations = append(result.Allocations, allocation)
+	}
+
+	return result
+}
