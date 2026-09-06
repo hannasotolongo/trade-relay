@@ -9,10 +9,11 @@ import (
 )
 
 var (
-	ErrMissingBrokerOrderID     = errors.New("missing broker order ID")
+	ErrMissingOrderReference    = errors.New("missing order reference")
 	ErrInvalidFilledQuantity    = errors.New("invalid filled quantity")
 	ErrFilledQuantityRegression = errors.New("filled quantity cannot decrease")
 	ErrInconsistentBrokerState  = errors.New("broker status and filled quantity are inconsistent")
+	ErrUnexpectedBrokerOrderID  = errors.New("broker returned unexpected order ID")
 )
 
 type Reconciler struct {
@@ -25,20 +26,38 @@ func (r Reconciler) Reconcile(
 	order *trading.Order,
 	now time.Time,
 ) error {
-	if order.BrokerOrderID == "" {
-		return ErrMissingBrokerOrderID
+	if order.ID == "" && order.BrokerOrderID == "" {
+		return ErrMissingOrderReference
 	}
 
-	result, err := r.Broker.GetOrder(
-		ctx,
-		order.BrokerOrderID,
+	var (
+		result trading.BrokerResult
+		err    error
 	)
+
+	if order.BrokerOrderID != "" {
+		result, err = r.Broker.GetOrder(
+			ctx,
+			order.BrokerOrderID,
+		)
+	} else {
+		result, err = r.Broker.GetOrderByClientID(
+			ctx,
+			order.ID,
+		)
+	}
+
 	if err != nil {
 		return err
 	}
 
-	if result.OrderID != order.BrokerOrderID {
-		return errors.New("broker returned unexpected order ID")
+	if order.BrokerOrderID != "" &&
+		result.OrderID != order.BrokerOrderID {
+		return ErrUnexpectedBrokerOrderID
+	}
+
+	if result.OrderID == "" {
+		return ErrUnexpectedBrokerOrderID
 	}
 
 	if result.FilledQuantity < 0 ||
@@ -77,6 +96,7 @@ func (r Reconciler) Reconcile(
 		return err
 	}
 
+	order.BrokerOrderID = result.OrderID
 	order.FilledQuantity = result.FilledQuantity
 
 	return r.Store.Update(*order)

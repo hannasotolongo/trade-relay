@@ -213,3 +213,16 @@ func (successfulBatchBroker) GetOrder(
 		Status:  trading.OrderAcknowledged,
 	}, nil
 }
+func (successfulBatchBroker) GetOrderByClientID(
+	ctx context.Context,
+	clientOrderID string,
+) (trading.BrokerResult, error) {
+	if err := ctx.Err(); err != nil {
+		return trading.BrokerResult{}, err
+	}
+
+	return trading.BrokerResult{
+		OrderID: "broker-" + clientOrderID,
+		Status:  trading.OrderAcknowledged,
+	}, nil
+}

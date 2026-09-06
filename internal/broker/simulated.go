@@ -7,10 +7,12 @@ import (
 )
 
 type SimulatedBroker struct {
-	Result    trading.BrokerResult
-	Err       error
-	GetResult trading.BrokerResult
-	GetErr    error
+	Result            trading.BrokerResult
+	Err               error
+	GetResult         trading.BrokerResult
+	GetErr            error
+	GetByClientResult trading.BrokerResult
+	GetByClientErr    error
 }
 
 func (b SimulatedBroker) SubmitOrder(
@@ -41,4 +43,19 @@ func (b SimulatedBroker) GetOrder(
 	}
 
 	return b.GetResult, nil
+}
+
+func (b SimulatedBroker) GetOrderByClientID(
+	ctx context.Context,
+	clientOrderID string,
+) (trading.BrokerResult, error) {
+	if err := ctx.Err(); err != nil {
+		return trading.BrokerResult{}, err
+	}
+
+	if b.GetByClientErr != nil {
+		return trading.BrokerResult{}, b.GetByClientErr
+	}
+
+	return b.GetByClientResult, nil
 }

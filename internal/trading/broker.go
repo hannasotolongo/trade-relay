@@ -18,4 +18,9 @@ type Broker interface {
 		ctx context.Context,
 		brokerOrderID string,
 	) (BrokerResult, error)
+
+	GetOrderByClientID(
+		ctx context.Context,
+		clientOrderID string,
+	) (BrokerResult, error)
 }
