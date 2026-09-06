@@ -286,3 +286,108 @@ func TestSubmitReturnsStoreError(t *testing.T) {
 		t.Fatalf("expected store error, got %v", err)
 	}
 }
+func TestSubmitMarksOrderRejectedWhenDefinitelyNotSent(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+
+	submitErr := trading.NewBrokerSubmissionError(
+		trading.SubmissionNotSent,
+		errors.New("validation failed before submission"),
+	)
+
+	order := trading.Order{
+		ID:     "order-001",
+		Status: trading.OrderCreated,
+	}
+
+	store := &fakeOrderStore{}
+
+	coordinator := Coordinator{
+		Broker: broker.SimulatedBroker{
+			Err: submitErr,
+		},
+		Store: store,
+	}
+
+	err := coordinator.Submit(
+		context.Background(),
+		&order,
+		now,
+	)
+
+	if err == nil {
+		t.Fatal("expected submission error")
+	}
+
+	if order.Status != trading.OrderRejected {
+		t.Fatalf(
+			"expected status %s, got %s",
+			trading.OrderRejected,
+			order.Status,
+		)
+	}
+
+	if len(store.updates) != 2 {
+		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
+	}
+
+	if store.updates[1].Status != trading.OrderRejected {
+		t.Fatalf(
+			"expected stored status %s, got %s",
+			trading.OrderRejected,
+			store.updates[1].Status,
+		)
+	}
+}
+
+func TestSubmitMarksOrderUnknownWhenOutcomeAmbiguous(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+
+	submitErr := trading.NewBrokerSubmissionError(
+		trading.SubmissionAmbiguous,
+		errors.New("connection lost after request"),
+	)
+
+	order := trading.Order{
+		ID:     "order-001",
+		Status: trading.OrderCreated,
+	}
+
+	store := &fakeOrderStore{}
+
+	coordinator := Coordinator{
+		Broker: broker.SimulatedBroker{
+			Err: submitErr,
+		},
+		Store: store,
+	}
+
+	err := coordinator.Submit(
+		context.Background(),
+		&order,
+		now,
+	)
+
+	if err == nil {
+		t.Fatal("expected submission error")
+	}
+
+	if order.Status != trading.OrderUnknown {
+		t.Fatalf(
+			"expected status %s, got %s",
+			trading.OrderUnknown,
+			order.Status,
+		)
+	}
+
+	if len(store.updates) != 2 {
+		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
+	}
+
+	if store.updates[1].Status != trading.OrderUnknown {
+		t.Fatalf(
+			"expected stored status %s, got %s",
+			trading.OrderUnknown,
+			store.updates[1].Status,
+		)
+	}
+}

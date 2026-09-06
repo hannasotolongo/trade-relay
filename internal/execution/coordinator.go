@@ -36,9 +36,17 @@ func (c Coordinator) Submit(
 
 	result, err := c.Broker.SubmitOrder(ctx, *order)
 	if err != nil {
+		targetStatus := trading.OrderUnknown
+
+		if outcome, ok := trading.SubmissionOutcomeFromError(err); ok {
+			if outcome == trading.SubmissionNotSent {
+				targetStatus = trading.OrderRejected
+			}
+		}
+
 		if transitionErr := trading.TransitionOrder(
 			order,
-			trading.OrderUnknown,
+			targetStatus,
 			now,
 		); transitionErr != nil {
 			return transitionErr
