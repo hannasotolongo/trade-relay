@@ -83,3 +83,65 @@ CREATED → REJECTED   ✗
 SUBMITTING --------→ REJECTED
                    \
                     → UNKNOWN
+
+_____________________________________________________________________________________________________________
+**Important Notes and points about system below** ___________________________________________________________________________________________________________
+					
+**Pessimistic** =  two users try to change data at the same time leading to conflict (prevent issue upfront) use locking
+- high conflict areas
+- cause possible blocking
+- locks cost money
+  
+  			VS
+  
+**Optimistic** = assumes conflict between users are rare, will let many users read and change data freely without locking anything
+- will check for conflict only at commit time 
+- allows higher concurrency and throughput
+- lots of rollbacks if error occur
+- need good version tracking and timestamp to see when problem occurred
+
+**Locking**
+- allows no change of value
+- other end needs to wait
+- expensive
+
+**Database Isolation Levels and Concurrency**
+SQL three phenomenon
+1. Dirty reads: uncommitted dependency occurs when a transaction retrieves a row that has been updated by another transaction that is not yet committed. We only want to apply data base changes when we commit transaction- dirty read violates this 
+
+2. Non repeatable reads: Occurs when transaction retrieves a row twice and that row is updated by another transaction that is committed in between.
+   
+3. phantom reads: Occurs when a transaction retrieves a set of rows twice and new rows are inserted into or removed from set by another transaction that is committed in between.
+   - extra row
+
+**Data base isolation**
+1.Read Uncommitted 
+- no isolation, any changes from outside is visible to transaction
+- can get all phenomenon
+  
+2. Read Committed
+- each query in a transaction only sees committed stuff at the time of the query
+- wont get dirty read
+  
+3. Repeatable Read
+- each query in transaction only sees committed updates at the beginning of the transaction
+- shared lock
+- subject to phantom read
+  
+4. Serializable
+- slowest
+- nothing runs in parallel
+- wont get any issues
+  
+**ACID/how it works into Trade Relay**
+1. Atomicity: all operations within a transaction happen or none happen at all
+   - If one fails all should rollback
+     
+3. consistency: data must obtain rules before and after transaction
+
+
+4. Isolation: concurrent transactions should not corrupt each others work
+  - can my inflight transaction see changes made by other transactions?
+
+
+5. Durability: once committed data survives crashes  
