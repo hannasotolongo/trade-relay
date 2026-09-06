@@ -24,7 +24,7 @@ func TestReconcileUnknownToPartiallyFilled(t *testing.T) {
 	store := &fakeOrderStore{}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderPartiallyFilled,
@@ -85,7 +85,7 @@ func TestReconcilePartiallyFilledToFilled(t *testing.T) {
 	store := &fakeOrderStore{}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderFilled,
@@ -127,7 +127,7 @@ func TestReconcileRejectsMissingOrderReference(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{},
+		Broker: &broker.SimulatedBroker{},
 		Store:  &fakeOrderStore{},
 	}
 
@@ -159,7 +159,7 @@ func TestReconcileUsesClientOrderIDWhenBrokerOrderIDMissing(t *testing.T) {
 	store := &fakeOrderStore{}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetByClientResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderAcknowledged,
@@ -219,7 +219,7 @@ func TestReconcileRejectsUnexpectedBrokerOrderID(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "different-order",
 				Status:         trading.OrderFilled,
@@ -253,7 +253,7 @@ func TestReconcileRejectsInvalidFilledQuantity(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderFilled,
@@ -289,7 +289,7 @@ func TestReconcileReturnsBrokerError(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetErr: brokerErr,
 		},
 		Store: &fakeOrderStore{},
@@ -316,7 +316,7 @@ func TestReconcileReturnsClientLookupError(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetByClientErr: brokerErr,
 		},
 		Store: &fakeOrderStore{},
@@ -343,7 +343,7 @@ func TestReconcileRejectsFilledQuantityRegression(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderPartiallyFilled,
@@ -393,7 +393,7 @@ func TestReconcileRejectsFilledStatusWithIncompleteQuantity(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderFilled,
@@ -428,7 +428,7 @@ func TestReconcileRejectsPartialFillWithZeroQuantity(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderPartiallyFilled,
@@ -463,7 +463,7 @@ func TestReconcileRejectsPartialFillAtFullQuantity(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderPartiallyFilled,
@@ -498,7 +498,7 @@ func TestReconcileRejectsAcknowledgedOrderWithFill(t *testing.T) {
 	}
 
 	reconciler := Reconciler{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			GetResult: trading.BrokerResult{
 				OrderID:        "broker-order-001",
 				Status:         trading.OrderAcknowledged,

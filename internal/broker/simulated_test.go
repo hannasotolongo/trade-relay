@@ -121,3 +121,111 @@ func TestSimulatedBrokerGetOrderRespectsCanceledContext(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+func TestSubmitOrderIsIdempotentByClientOrderID(t *testing.T) {
+	b := &SimulatedBroker{}
+
+	order := trading.Order{
+		ID:              "order-001",
+		SignalID:        "signal-001",
+		AccountID:       "account-001",
+		BrokerAccountID: "broker-account-001",
+		Symbol:          "AAPL",
+		Side:            trading.SideBuy,
+		Quantity:        100,
+		Status:          trading.OrderCreated,
+	}
+
+	first, err := b.SubmitOrder(
+		context.Background(),
+		order,
+	)
+	if err != nil {
+		t.Fatalf("first submit: %v", err)
+	}
+
+	second, err := b.SubmitOrder(
+		context.Background(),
+		order,
+	)
+	if err != nil {
+		t.Fatalf("second submit: %v", err)
+	}
+
+	if first.OrderID != second.OrderID {
+		t.Fatalf(
+			"expected same broker order ID, got %q and %q",
+			first.OrderID,
+			second.OrderID,
+		)
+	}
+
+	if first.OrderID != "broker-order-001" {
+		t.Fatalf(
+			"expected broker order ID %q, got %q",
+			"broker-order-001",
+			first.OrderID,
+		)
+	}
+}
+func TestSubmitOrderConcurrentIdempotency(t *testing.T) {
+	b := &SimulatedBroker{}
+
+	order := trading.Order{
+		ID:              "order-001",
+		SignalID:        "signal-001",
+		AccountID:       "account-001",
+		BrokerAccountID: "broker-account-001",
+		Symbol:          "AAPL",
+		Side:            trading.SideBuy,
+		Quantity:        100,
+		Status:          trading.OrderCreated,
+	}
+
+	const goroutines = 20
+
+	results := make(chan trading.BrokerResult, goroutines)
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			result, err := b.SubmitOrder(
+				context.Background(),
+				order,
+			)
+
+			results <- result
+			errs <- err
+		}()
+	}
+
+	var expectedOrderID string
+
+	for i := 0; i < goroutines; i++ {
+		err := <-errs
+		if err != nil {
+			t.Fatalf("submit order: %v", err)
+		}
+
+		result := <-results
+
+		if expectedOrderID == "" {
+			expectedOrderID = result.OrderID
+		}
+
+		if result.OrderID != expectedOrderID {
+			t.Fatalf(
+				"expected broker order ID %q, got %q",
+				expectedOrderID,
+				result.OrderID,
+			)
+		}
+	}
+
+	if expectedOrderID != "broker-order-001" {
+		t.Fatalf(
+			"expected broker order ID %q, got %q",
+			"broker-order-001",
+			expectedOrderID,
+		)
+	}
+}

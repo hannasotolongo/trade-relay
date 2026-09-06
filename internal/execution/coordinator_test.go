@@ -52,11 +52,10 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
 	order := validCoordinatorOrder()
-
 	store := &fakeOrderStore{}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			Result: trading.BrokerResult{
 				OrderID: "broker-order-001",
 				Status:  trading.OrderAcknowledged,
@@ -124,11 +123,10 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 	brokerErr := errors.New("broker unavailable")
 
 	order := validCoordinatorOrder()
-
 	store := &fakeOrderStore{}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			Err: brokerErr,
 		},
 		Store: store,
@@ -182,7 +180,7 @@ func TestSubmitRejectsInvalidStartingState(t *testing.T) {
 	store := &fakeOrderStore{}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{},
+		Broker: &broker.SimulatedBroker{},
 		Store:  store,
 	}
 
@@ -219,11 +217,10 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 	cancel()
 
 	order := validCoordinatorOrder()
-
 	store := &fakeOrderStore{}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			Result: trading.BrokerResult{
 				OrderID: "broker-order-001",
 				Status:  trading.OrderAcknowledged,
@@ -273,7 +270,7 @@ func TestSubmitReturnsStoreError(t *testing.T) {
 	}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{},
+		Broker: &broker.SimulatedBroker{},
 		Store:  store,
 	}
 
@@ -297,11 +294,10 @@ func TestSubmitMarksOrderRejectedWhenDefinitelyNotSent(t *testing.T) {
 	)
 
 	order := validCoordinatorOrder()
-
 	store := &fakeOrderStore{}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			Err: submitErr,
 		},
 		Store: store,
@@ -347,11 +343,10 @@ func TestSubmitMarksOrderUnknownWhenOutcomeAmbiguous(t *testing.T) {
 	)
 
 	order := validCoordinatorOrder()
-
 	store := &fakeOrderStore{}
 
 	coordinator := Coordinator{
-		Broker: broker.SimulatedBroker{
+		Broker: &broker.SimulatedBroker{
 			Err: submitErr,
 		},
 		Store: store,
