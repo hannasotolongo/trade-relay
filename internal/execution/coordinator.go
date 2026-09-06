@@ -22,6 +22,10 @@ func (c Coordinator) Submit(
 	order *trading.Order,
 	now time.Time,
 ) error {
+	if err := trading.ValidateOrder(*order); err != nil {
+		return err
+	}
+
 	if err := trading.TransitionOrder(
 		order,
 		trading.OrderSubmitting,

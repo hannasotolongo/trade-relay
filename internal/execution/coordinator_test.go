@@ -34,13 +34,24 @@ func (s *fakeOrderStore) Update(order trading.Order) error {
 	return nil
 }
 
+func validCoordinatorOrder() trading.Order {
+	return trading.Order{
+		ID:              "order-001",
+		SignalID:        "signal-001",
+		AccountID:       "account-001",
+		BrokerAccountID: "broker-account-001",
+		Symbol:          "AAPL",
+		Side:            trading.SideBuy,
+		Quantity:        100,
+		FilledQuantity:  0,
+		Status:          trading.OrderCreated,
+	}
+}
+
 func TestSubmitAcknowledgesOrder(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderCreated,
-	}
+	order := validCoordinatorOrder()
 
 	store := &fakeOrderStore{}
 
@@ -112,10 +123,7 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	brokerErr := errors.New("broker unavailable")
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderCreated,
-	}
+	order := validCoordinatorOrder()
 
 	store := &fakeOrderStore{}
 
@@ -167,10 +175,9 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 func TestSubmitRejectsInvalidStartingState(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderFilled,
-	}
+	order := validCoordinatorOrder()
+	order.Status = trading.OrderFilled
+	order.FilledQuantity = order.Quantity
 
 	store := &fakeOrderStore{}
 
@@ -211,10 +218,7 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderCreated,
-	}
+	order := validCoordinatorOrder()
 
 	store := &fakeOrderStore{}
 
@@ -262,10 +266,7 @@ func TestSubmitReturnsStoreError(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	storeErr := errors.New("store unavailable")
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderCreated,
-	}
+	order := validCoordinatorOrder()
 
 	store := &fakeOrderStore{
 		err: storeErr,
@@ -286,6 +287,7 @@ func TestSubmitReturnsStoreError(t *testing.T) {
 		t.Fatalf("expected store error, got %v", err)
 	}
 }
+
 func TestSubmitMarksOrderRejectedWhenDefinitelyNotSent(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
@@ -294,10 +296,7 @@ func TestSubmitMarksOrderRejectedWhenDefinitelyNotSent(t *testing.T) {
 		errors.New("validation failed before submission"),
 	)
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderCreated,
-	}
+	order := validCoordinatorOrder()
 
 	store := &fakeOrderStore{}
 
@@ -347,10 +346,7 @@ func TestSubmitMarksOrderUnknownWhenOutcomeAmbiguous(t *testing.T) {
 		errors.New("connection lost after request"),
 	)
 
-	order := trading.Order{
-		ID:     "order-001",
-		Status: trading.OrderCreated,
-	}
+	order := validCoordinatorOrder()
 
 	store := &fakeOrderStore{}
 
