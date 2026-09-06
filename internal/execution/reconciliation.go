@@ -9,8 +9,10 @@ import (
 )
 
 var (
-	ErrMissingBrokerOrderID  = errors.New("missing broker order ID")
-	ErrInvalidFilledQuantity = errors.New("invalid filled quantity")
+	ErrMissingBrokerOrderID     = errors.New("missing broker order ID")
+	ErrInvalidFilledQuantity    = errors.New("invalid filled quantity")
+	ErrFilledQuantityRegression = errors.New("filled quantity cannot decrease")
+	ErrInconsistentBrokerState  = errors.New("broker status and filled quantity are inconsistent")
 )
 
 type Reconciler struct {
@@ -42,6 +44,29 @@ func (r Reconciler) Reconcile(
 	if result.FilledQuantity < 0 ||
 		result.FilledQuantity > order.Quantity {
 		return ErrInvalidFilledQuantity
+	}
+
+	if result.FilledQuantity < order.FilledQuantity {
+		return ErrFilledQuantityRegression
+	}
+
+	switch result.Status {
+	case trading.OrderFilled:
+		if result.FilledQuantity != order.Quantity {
+			return ErrInconsistentBrokerState
+		}
+
+	case trading.OrderPartiallyFilled:
+		if result.FilledQuantity <= 0 ||
+			result.FilledQuantity >= order.Quantity {
+			return ErrInconsistentBrokerState
+		}
+
+	case trading.OrderAcknowledged,
+		trading.OrderRejected:
+		if result.FilledQuantity != 0 {
+			return ErrInconsistentBrokerState
+		}
 	}
 
 	if err := trading.TransitionOrder(

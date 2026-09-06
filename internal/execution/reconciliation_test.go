@@ -236,3 +236,192 @@ func TestReconcileReturnsBrokerError(t *testing.T) {
 		t.Fatalf("expected broker error, got %v", err)
 	}
 }
+func TestReconcileRejectsFilledQuantityRegression(t *testing.T) {
+	order := trading.Order{
+		ID:             "order-001",
+		BrokerOrderID:  "broker-order-001",
+		Quantity:       100,
+		FilledQuantity: 40,
+		Status:         trading.OrderPartiallyFilled,
+	}
+
+	reconciler := Reconciler{
+		Broker: broker.SimulatedBroker{
+			GetResult: trading.BrokerResult{
+				OrderID:        "broker-order-001",
+				Status:         trading.OrderPartiallyFilled,
+				FilledQuantity: 20,
+			},
+		},
+		Store: &fakeOrderStore{},
+	}
+
+	err := reconciler.Reconcile(
+		context.Background(),
+		&order,
+		time.Now(),
+	)
+
+	if !errors.Is(err, ErrFilledQuantityRegression) {
+		t.Fatalf(
+			"expected %v, got %v",
+			ErrFilledQuantityRegression,
+			err,
+		)
+	}
+
+	if order.FilledQuantity != 40 {
+		t.Fatalf(
+			"expected filled quantity to remain 40, got %d",
+			order.FilledQuantity,
+		)
+	}
+
+	if order.Status != trading.OrderPartiallyFilled {
+		t.Fatalf(
+			"expected status to remain %s, got %s",
+			trading.OrderPartiallyFilled,
+			order.Status,
+		)
+	}
+}
+
+func TestReconcileRejectsFilledStatusWithIncompleteQuantity(t *testing.T) {
+	order := trading.Order{
+		ID:             "order-001",
+		BrokerOrderID:  "broker-order-001",
+		Quantity:       100,
+		FilledQuantity: 40,
+		Status:         trading.OrderPartiallyFilled,
+	}
+
+	reconciler := Reconciler{
+		Broker: broker.SimulatedBroker{
+			GetResult: trading.BrokerResult{
+				OrderID:        "broker-order-001",
+				Status:         trading.OrderFilled,
+				FilledQuantity: 90,
+			},
+		},
+		Store: &fakeOrderStore{},
+	}
+
+	err := reconciler.Reconcile(
+		context.Background(),
+		&order,
+		time.Now(),
+	)
+
+	if !errors.Is(err, ErrInconsistentBrokerState) {
+		t.Fatalf(
+			"expected %v, got %v",
+			ErrInconsistentBrokerState,
+			err,
+		)
+	}
+}
+
+func TestReconcileRejectsPartialFillWithZeroQuantity(t *testing.T) {
+	order := trading.Order{
+		ID:             "order-001",
+		BrokerOrderID:  "broker-order-001",
+		Quantity:       100,
+		FilledQuantity: 0,
+		Status:         trading.OrderAcknowledged,
+	}
+
+	reconciler := Reconciler{
+		Broker: broker.SimulatedBroker{
+			GetResult: trading.BrokerResult{
+				OrderID:        "broker-order-001",
+				Status:         trading.OrderPartiallyFilled,
+				FilledQuantity: 0,
+			},
+		},
+		Store: &fakeOrderStore{},
+	}
+
+	err := reconciler.Reconcile(
+		context.Background(),
+		&order,
+		time.Now(),
+	)
+
+	if !errors.Is(err, ErrInconsistentBrokerState) {
+		t.Fatalf(
+			"expected %v, got %v",
+			ErrInconsistentBrokerState,
+			err,
+		)
+	}
+}
+
+func TestReconcileRejectsPartialFillAtFullQuantity(t *testing.T) {
+	order := trading.Order{
+		ID:             "order-001",
+		BrokerOrderID:  "broker-order-001",
+		Quantity:       100,
+		FilledQuantity: 40,
+		Status:         trading.OrderPartiallyFilled,
+	}
+
+	reconciler := Reconciler{
+		Broker: broker.SimulatedBroker{
+			GetResult: trading.BrokerResult{
+				OrderID:        "broker-order-001",
+				Status:         trading.OrderPartiallyFilled,
+				FilledQuantity: 100,
+			},
+		},
+		Store: &fakeOrderStore{},
+	}
+
+	err := reconciler.Reconcile(
+		context.Background(),
+		&order,
+		time.Now(),
+	)
+
+	if !errors.Is(err, ErrInconsistentBrokerState) {
+		t.Fatalf(
+			"expected %v, got %v",
+			ErrInconsistentBrokerState,
+			err,
+		)
+	}
+}
+
+func TestReconcileRejectsAcknowledgedOrderWithFill(t *testing.T) {
+	order := trading.Order{
+		ID:             "order-001",
+		BrokerOrderID:  "broker-order-001",
+		Quantity:       100,
+		FilledQuantity: 0,
+		Status:         trading.OrderUnknown,
+	}
+
+	reconciler := Reconciler{
+		Broker: broker.SimulatedBroker{
+			GetResult: trading.BrokerResult{
+				OrderID:        "broker-order-001",
+				Status:         trading.OrderAcknowledged,
+				FilledQuantity: 10,
+			},
+		},
+		Store: &fakeOrderStore{},
+	}
+
+	err := reconciler.Reconcile(
+		context.Background(),
+		&order,
+		time.Now(),
+	)
+
+	if !errors.Is(err, ErrInconsistentBrokerState) {
+		t.Fatalf(
+			"expected %v, got %v",
+			ErrInconsistentBrokerState,
+			err,
+		)
+	}
+}
