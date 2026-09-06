@@ -7,8 +7,13 @@ import (
 	"github.com/hannasotolongo/trade-relay/internal/trading"
 )
 
+type OrderStore interface {
+	Update(order trading.Order) error
+}
+
 type Coordinator struct {
 	Broker trading.Broker
+	Store  OrderStore
 }
 
 func (c Coordinator) Submit(
@@ -24,6 +29,10 @@ func (c Coordinator) Submit(
 		return err
 	}
 
+	if err := c.Store.Update(*order); err != nil {
+		return err
+	}
+
 	result, err := c.Broker.SubmitOrder(ctx, *order)
 	if err != nil {
 		if transitionErr := trading.TransitionOrder(
@@ -34,12 +43,20 @@ func (c Coordinator) Submit(
 			return transitionErr
 		}
 
+		if updateErr := c.Store.Update(*order); updateErr != nil {
+			return updateErr
+		}
+
 		return err
 	}
 
-	return trading.TransitionOrder(
+	if err := trading.TransitionOrder(
 		order,
 		result.Status,
 		now,
-	)
+	); err != nil {
+		return err
+	}
+
+	return c.Store.Update(*order)
 }

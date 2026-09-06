@@ -10,6 +10,20 @@ import (
 	"github.com/hannasotolongo/trade-relay/internal/trading"
 )
 
+type fakeOrderStore struct {
+	updates []trading.Order
+	err     error
+}
+
+func (s *fakeOrderStore) Update(order trading.Order) error {
+	if s.err != nil {
+		return s.err
+	}
+
+	s.updates = append(s.updates, order)
+	return nil
+}
+
 func TestSubmitAcknowledgesOrder(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 
@@ -18,6 +32,8 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 		Status: trading.OrderCreated,
 	}
 
+	store := &fakeOrderStore{}
+
 	coordinator := Coordinator{
 		Broker: broker.SimulatedBroker{
 			Result: trading.BrokerResult{
@@ -25,6 +41,7 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 				Status:  trading.OrderAcknowledged,
 			},
 		},
+		Store: store,
 	}
 
 	err := coordinator.Submit(
@@ -44,8 +61,24 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 		)
 	}
 
-	if !order.UpdatedAt.Equal(now) {
-		t.Fatalf("expected UpdatedAt %v, got %v", now, order.UpdatedAt)
+	if len(store.updates) != 2 {
+		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
+	}
+
+	if store.updates[0].Status != trading.OrderSubmitting {
+		t.Fatalf(
+			"expected first stored status %s, got %s",
+			trading.OrderSubmitting,
+			store.updates[0].Status,
+		)
+	}
+
+	if store.updates[1].Status != trading.OrderAcknowledged {
+		t.Fatalf(
+			"expected second stored status %s, got %s",
+			trading.OrderAcknowledged,
+			store.updates[1].Status,
+		)
 	}
 }
 
@@ -58,10 +91,13 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 		Status: trading.OrderCreated,
 	}
 
+	store := &fakeOrderStore{}
+
 	coordinator := Coordinator{
 		Broker: broker.SimulatedBroker{
 			Err: brokerErr,
 		},
+		Store: store,
 	}
 
 	err := coordinator.Submit(
@@ -81,6 +117,18 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 			order.Status,
 		)
 	}
+
+	if len(store.updates) != 2 {
+		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
+	}
+
+	if store.updates[1].Status != trading.OrderUnknown {
+		t.Fatalf(
+			"expected final stored status %s, got %s",
+			trading.OrderUnknown,
+			store.updates[1].Status,
+		)
+	}
 }
 
 func TestSubmitRejectsInvalidStartingState(t *testing.T) {
@@ -91,8 +139,11 @@ func TestSubmitRejectsInvalidStartingState(t *testing.T) {
 		Status: trading.OrderFilled,
 	}
 
+	store := &fakeOrderStore{}
+
 	coordinator := Coordinator{
 		Broker: broker.SimulatedBroker{},
+		Store:  store,
 	}
 
 	err := coordinator.Submit(
@@ -115,6 +166,10 @@ func TestSubmitRejectsInvalidStartingState(t *testing.T) {
 			order.Status,
 		)
 	}
+
+	if len(store.updates) != 0 {
+		t.Fatalf("expected no store updates, got %d", len(store.updates))
+	}
 }
 
 func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
@@ -128,6 +183,8 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 		Status: trading.OrderCreated,
 	}
 
+	store := &fakeOrderStore{}
+
 	coordinator := Coordinator{
 		Broker: broker.SimulatedBroker{
 			Result: trading.BrokerResult{
@@ -135,6 +192,7 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 				Status:  trading.OrderAcknowledged,
 			},
 		},
+		Store: store,
 	}
 
 	err := coordinator.Submit(
@@ -153,5 +211,38 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 			trading.OrderUnknown,
 			order.Status,
 		)
+	}
+
+	if len(store.updates) != 2 {
+		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
+	}
+}
+
+func TestSubmitReturnsStoreError(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	storeErr := errors.New("store unavailable")
+
+	order := trading.Order{
+		ID:     "order-001",
+		Status: trading.OrderCreated,
+	}
+
+	store := &fakeOrderStore{
+		err: storeErr,
+	}
+
+	coordinator := Coordinator{
+		Broker: broker.SimulatedBroker{},
+		Store:  store,
+	}
+
+	err := coordinator.Submit(
+		context.Background(),
+		&order,
+		now,
+	)
+
+	if !errors.Is(err, storeErr) {
+		t.Fatalf("expected store error, got %v", err)
 	}
 }
