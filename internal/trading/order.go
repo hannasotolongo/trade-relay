@@ -25,6 +25,7 @@ type Order struct {
 	Quantity        int64
 	FilledQuantity  int64
 	Status          OrderStatus
+	Version         int64
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }

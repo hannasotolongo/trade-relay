@@ -25,6 +25,7 @@ func testMySQLOrder() trading.Order {
 		Quantity:        100,
 		FilledQuantity:  0,
 		Status:          trading.OrderAcknowledged,
+		Version:         1,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -52,6 +53,7 @@ func TestMySQLOrderStoreCreate(t *testing.T) {
 			order.Quantity,
 			order.FilledQuantity,
 			order.Status,
+			order.Version,
 			order.CreatedAt,
 			order.UpdatedAt,
 		).
@@ -65,6 +67,42 @@ func TestMySQLOrderStoreCreate(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestMySQLOrderStoreCreateDefaultsVersionToOne(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewMySQLOrderStore(db)
+	order := testMySQLOrder()
+	order.Version = 0
+
+	mock.ExpectExec("INSERT INTO orders").
+		WithArgs(
+			order.ID,
+			order.SignalID,
+			order.AccountID,
+			order.BrokerAccountID,
+			order.BrokerOrderID,
+			order.Symbol,
+			order.Side,
+			order.Quantity,
+			order.FilledQuantity,
+			order.Status,
+			int64(1),
+			order.CreatedAt,
+			order.UpdatedAt,
+		).
+		WillReturnResult(
+			sqlmock.NewResult(1, 1),
+		)
+
+	if err := store.Create(order); err != nil {
+		t.Fatalf("create order: %v", err)
 	}
 }
 
@@ -89,6 +127,7 @@ func TestMySQLOrderStoreGet(t *testing.T) {
 		"quantity",
 		"filled_quantity",
 		"status",
+		"version",
 		"created_at",
 		"updated_at",
 	}).AddRow(
@@ -102,6 +141,7 @@ func TestMySQLOrderStoreGet(t *testing.T) {
 		expected.Quantity,
 		expected.FilledQuantity,
 		expected.Status,
+		expected.Version,
 		expected.CreatedAt,
 		expected.UpdatedAt,
 	)
@@ -132,6 +172,14 @@ func TestMySQLOrderStoreGet(t *testing.T) {
 			"expected status %s, got %s",
 			expected.Status,
 			order.Status,
+		)
+	}
+
+	if order.Version != expected.Version {
+		t.Fatalf(
+			"expected version %d, got %d",
+			expected.Version,
+			order.Version,
 		)
 	}
 
@@ -184,6 +232,7 @@ func TestMySQLOrderStoreUpdate(t *testing.T) {
 			order.Status,
 			order.UpdatedAt,
 			order.ID,
+			order.Version,
 		).
 		WillReturnResult(
 			sqlmock.NewResult(0, 1),
@@ -198,7 +247,7 @@ func TestMySQLOrderStoreUpdate(t *testing.T) {
 	}
 }
 
-func TestMySQLOrderStoreUpdateMissingOrder(t *testing.T) {
+func TestMySQLOrderStoreRejectsVersionConflict(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create sql mock: %v", err)
@@ -209,16 +258,46 @@ func TestMySQLOrderStoreUpdateMissingOrder(t *testing.T) {
 	order := testMySQLOrder()
 
 	mock.ExpectExec("UPDATE orders").
+		WithArgs(
+			order.BrokerOrderID,
+			order.FilledQuantity,
+			order.Status,
+			order.UpdatedAt,
+			order.ID,
+			order.Version,
+		).
 		WillReturnResult(
 			sqlmock.NewResult(0, 0),
 		)
 
 	err = store.Update(order)
 
-	if !errors.Is(err, ErrOrderNotFound) {
+	if !errors.Is(err, ErrOrderVersionConflict) {
 		t.Fatalf(
 			"expected %v, got %v",
-			ErrOrderNotFound,
+			ErrOrderVersionConflict,
+			err,
+		)
+	}
+}
+
+func TestMySQLOrderStoreRejectsMissingVersion(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer db.Close()
+
+	store := NewMySQLOrderStore(db)
+	order := testMySQLOrder()
+	order.Version = 0
+
+	err = store.Update(order)
+
+	if !errors.Is(err, ErrOrderVersionConflict) {
+		t.Fatalf(
+			"expected %v, got %v",
+			ErrOrderVersionConflict,
 			err,
 		)
 	}

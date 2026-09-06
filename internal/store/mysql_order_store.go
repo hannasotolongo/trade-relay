@@ -41,6 +41,11 @@ func OpenMySQL(
 }
 
 func (s *MySQLOrderStore) Create(order trading.Order) error {
+	version := order.Version
+	if version == 0 {
+		version = 1
+	}
+
 	_, err := s.db.Exec(
 		`
 		INSERT INTO orders (
@@ -54,10 +59,11 @@ func (s *MySQLOrderStore) Create(order trading.Order) error {
 			quantity,
 			filled_quantity,
 			status,
+			version,
 			created_at,
 			updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`,
 		order.ID,
 		order.SignalID,
@@ -69,6 +75,7 @@ func (s *MySQLOrderStore) Create(order trading.Order) error {
 		order.Quantity,
 		order.FilledQuantity,
 		order.Status,
+		version,
 		order.CreatedAt,
 		order.UpdatedAt,
 	)
@@ -100,6 +107,7 @@ func (s *MySQLOrderStore) Get(
 			quantity,
 			filled_quantity,
 			status,
+			version,
 			created_at,
 			updated_at
 		FROM orders
@@ -117,6 +125,7 @@ func (s *MySQLOrderStore) Get(
 		&order.Quantity,
 		&order.FilledQuantity,
 		&order.Status,
+		&order.Version,
 		&order.CreatedAt,
 		&order.UpdatedAt,
 	)
@@ -135,6 +144,10 @@ func (s *MySQLOrderStore) Get(
 }
 
 func (s *MySQLOrderStore) Update(order trading.Order) error {
+	if order.Version <= 0 {
+		return ErrOrderVersionConflict
+	}
+
 	result, err := s.db.Exec(
 		`
 		UPDATE orders
@@ -145,12 +158,14 @@ func (s *MySQLOrderStore) Update(order trading.Order) error {
 			updated_at = ?,
 			version = version + 1
 		WHERE id = ?
+			AND version = ?
 		`,
 		nullableString(order.BrokerOrderID),
 		order.FilledQuantity,
 		order.Status,
 		order.UpdatedAt,
 		order.ID,
+		order.Version,
 	)
 	if err != nil {
 		return fmt.Errorf("update order: %w", err)
@@ -162,7 +177,7 @@ func (s *MySQLOrderStore) Update(order trading.Order) error {
 	}
 
 	if rowsAffected == 0 {
-		return ErrOrderNotFound
+		return ErrOrderVersionConflict
 	}
 
 	return nil
