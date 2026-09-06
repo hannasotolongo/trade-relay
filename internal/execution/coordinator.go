@@ -8,6 +8,7 @@ import (
 )
 
 type OrderStore interface {
+	Create(order trading.Order) error
 	Update(order trading.Order) error
 }
 

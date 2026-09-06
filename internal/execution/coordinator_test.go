@@ -11,8 +11,18 @@ import (
 )
 
 type fakeOrderStore struct {
+	creates []trading.Order
 	updates []trading.Order
 	err     error
+}
+
+func (s *fakeOrderStore) Create(order trading.Order) error {
+	if s.err != nil {
+		return s.err
+	}
+
+	s.creates = append(s.creates, order)
+	return nil
 }
 
 func (s *fakeOrderStore) Update(order trading.Order) error {
