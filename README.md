@@ -28,7 +28,7 @@ TradeRelay                         Broker
 
 ## Hypothesis
 
-TradeRelay tests the hypothesis that persisting execution intent before broker submission, maintaining stable order identity, and reconciling ambiguous outcomes against broker state can allow a trade execution system to recover from crashes, timeouts, and concurrent retries without creating duplicate logical executions.
+A trade execution system can recover safely from failures that occur after an order may have reached the broker by preserving enough durable state to determine the order's actual outcome before deciding whether it should be submitted again.
 
 ## System Design
 
