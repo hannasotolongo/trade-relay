@@ -1,0 +1,32 @@
+**problem 1*
+
+TradeRelay
+   ↓
+Save order = SUBMITTING
+   ↓
+Send order to broker
+   ↓
+Broker ACCEPTS order
+   ↓
+TradeRelay crashes
+   ↓
+Never saves ACKNOWLEDGED
+
+
+two problems: when traderelay restarts it cant just submit those two orders again
+= now perfrom recovery and reconsiliation 
+
+
+what happens after program stops? 
+The  Go program memory will disappear when the process dies so we will need MySQL to persist it 
+
+multi-instance concurrency
+              Load Balancer
+               /        \
+              /          \
+      TradeRelay A    TradeRelay B
+              \          /
+               \        /
+                  MySQL
+                    |
+                  Broker
