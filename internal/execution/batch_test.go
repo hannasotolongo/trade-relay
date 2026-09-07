@@ -38,12 +38,14 @@ func (s *batchOrderStore) Create(order trading.Order) error {
 	return nil
 }
 
-func (s *batchOrderStore) Update(order trading.Order) error {
+func (s *batchOrderStore) Update(order *trading.Order) error {
 	if _, exists := s.orders[order.ID]; !exists {
 		return errors.New("order not found")
 	}
 
-	s.orders[order.ID] = order
+	order.Version++
+
+	s.orders[order.ID] = *order
 	return nil
 }
 
@@ -111,6 +113,14 @@ func TestExecuteAllocationsExecutesMultipleAccounts(t *testing.T) {
 				"expected order %s to be acknowledged, got %s",
 				order.ID,
 				order.Status,
+			)
+		}
+
+		if order.Version != 3 {
+			t.Fatalf(
+				"expected order %s to have version 3, got %d",
+				order.ID,
+				order.Version,
 			)
 		}
 	}
@@ -183,6 +193,13 @@ func TestExecuteAllocationsContinuesAfterMissingAccount(t *testing.T) {
 			result.Orders[0].AccountID,
 		)
 	}
+
+	if result.Orders[0].Version != 3 {
+		t.Fatalf(
+			"expected successful order version 3, got %d",
+			result.Orders[0].Version,
+		)
+	}
 }
 
 type successfulBatchBroker struct{}
@@ -200,6 +217,7 @@ func (successfulBatchBroker) SubmitOrder(
 		Status:  trading.OrderAcknowledged,
 	}, nil
 }
+
 func (successfulBatchBroker) GetOrder(
 	ctx context.Context,
 	brokerOrderID string,
@@ -213,6 +231,7 @@ func (successfulBatchBroker) GetOrder(
 		Status:  trading.OrderAcknowledged,
 	}, nil
 }
+
 func (successfulBatchBroker) GetOrderByClientID(
 	ctx context.Context,
 	clientOrderID string,

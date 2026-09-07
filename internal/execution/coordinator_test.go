@@ -25,12 +25,15 @@ func (s *fakeOrderStore) Create(order trading.Order) error {
 	return nil
 }
 
-func (s *fakeOrderStore) Update(order trading.Order) error {
+func (s *fakeOrderStore) Update(order *trading.Order) error {
 	if s.err != nil {
 		return s.err
 	}
 
-	s.updates = append(s.updates, order)
+	order.Version++
+
+	s.updates = append(s.updates, *order)
+
 	return nil
 }
 
@@ -45,6 +48,7 @@ func validCoordinatorOrder() trading.Order {
 		Quantity:        100,
 		FilledQuantity:  0,
 		Status:          trading.OrderCreated,
+		Version:         1,
 	}
 }
 
@@ -89,6 +93,13 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 		)
 	}
 
+	if order.Version != 3 {
+		t.Fatalf(
+			"expected version 3, got %d",
+			order.Version,
+		)
+	}
+
 	if len(store.updates) != 2 {
 		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
 	}
@@ -101,11 +112,25 @@ func TestSubmitAcknowledgesOrder(t *testing.T) {
 		)
 	}
 
+	if store.updates[0].Version != 2 {
+		t.Fatalf(
+			"expected first stored version 2, got %d",
+			store.updates[0].Version,
+		)
+	}
+
 	if store.updates[1].Status != trading.OrderAcknowledged {
 		t.Fatalf(
 			"expected second stored status %s, got %s",
 			trading.OrderAcknowledged,
 			store.updates[1].Status,
+		)
+	}
+
+	if store.updates[1].Version != 3 {
+		t.Fatalf(
+			"expected second stored version 3, got %d",
+			store.updates[1].Version,
 		)
 	}
 
@@ -157,6 +182,13 @@ func TestSubmitMarksOrderUnknownOnBrokerError(t *testing.T) {
 		)
 	}
 
+	if order.Version != 3 {
+		t.Fatalf(
+			"expected version 3, got %d",
+			order.Version,
+		)
+	}
+
 	if len(store.updates) != 2 {
 		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
 	}
@@ -202,6 +234,13 @@ func TestSubmitRejectsInvalidStartingState(t *testing.T) {
 			"expected status to remain %s, got %s",
 			trading.OrderFilled,
 			order.Status,
+		)
+	}
+
+	if order.Version != 1 {
+		t.Fatalf(
+			"expected version to remain 1, got %d",
+			order.Version,
 		)
 	}
 
@@ -254,6 +293,13 @@ func TestSubmitMarksOrderUnknownWhenContextCanceled(t *testing.T) {
 		)
 	}
 
+	if order.Version != 3 {
+		t.Fatalf(
+			"expected version 3, got %d",
+			order.Version,
+		)
+	}
+
 	if len(store.updates) != 2 {
 		t.Fatalf("expected 2 store updates, got %d", len(store.updates))
 	}
@@ -282,6 +328,13 @@ func TestSubmitReturnsStoreError(t *testing.T) {
 
 	if !errors.Is(err, storeErr) {
 		t.Fatalf("expected store error, got %v", err)
+	}
+
+	if order.Version != 1 {
+		t.Fatalf(
+			"expected version to remain 1 after failed update, got %d",
+			order.Version,
+		)
 	}
 }
 
@@ -318,6 +371,13 @@ func TestSubmitMarksOrderRejectedWhenDefinitelyNotSent(t *testing.T) {
 			"expected status %s, got %s",
 			trading.OrderRejected,
 			order.Status,
+		)
+	}
+
+	if order.Version != 3 {
+		t.Fatalf(
+			"expected version 3, got %d",
+			order.Version,
 		)
 	}
 
@@ -367,6 +427,13 @@ func TestSubmitMarksOrderUnknownWhenOutcomeAmbiguous(t *testing.T) {
 			"expected status %s, got %s",
 			trading.OrderUnknown,
 			order.Status,
+		)
+	}
+
+	if order.Version != 3 {
+		t.Fatalf(
+			"expected version 3, got %d",
+			order.Version,
 		)
 	}
 

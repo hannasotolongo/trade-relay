@@ -47,6 +47,7 @@ func NewOrder(
 		Quantity:        allocation.Quantity,
 		FilledQuantity:  0,
 		Status:          trading.OrderCreated,
+		Version:         1,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}, nil

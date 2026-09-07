@@ -225,6 +225,8 @@ func TestMySQLOrderStoreUpdate(t *testing.T) {
 	order.Status = trading.OrderFilled
 	order.FilledQuantity = 100
 
+	originalVersion := order.Version
+
 	mock.ExpectExec("UPDATE orders").
 		WithArgs(
 			order.BrokerOrderID,
@@ -232,14 +234,22 @@ func TestMySQLOrderStoreUpdate(t *testing.T) {
 			order.Status,
 			order.UpdatedAt,
 			order.ID,
-			order.Version,
+			originalVersion,
 		).
 		WillReturnResult(
 			sqlmock.NewResult(0, 1),
 		)
 
-	if err := store.Update(order); err != nil {
+	if err := store.Update(&order); err != nil {
 		t.Fatalf("update order: %v", err)
+	}
+
+	if order.Version != originalVersion+1 {
+		t.Fatalf(
+			"expected version %d, got %d",
+			originalVersion+1,
+			order.Version,
+		)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -257,6 +267,8 @@ func TestMySQLOrderStoreRejectsVersionConflict(t *testing.T) {
 	store := NewMySQLOrderStore(db)
 	order := testMySQLOrder()
 
+	originalVersion := order.Version
+
 	mock.ExpectExec("UPDATE orders").
 		WithArgs(
 			order.BrokerOrderID,
@@ -264,19 +276,27 @@ func TestMySQLOrderStoreRejectsVersionConflict(t *testing.T) {
 			order.Status,
 			order.UpdatedAt,
 			order.ID,
-			order.Version,
+			originalVersion,
 		).
 		WillReturnResult(
 			sqlmock.NewResult(0, 0),
 		)
 
-	err = store.Update(order)
+	err = store.Update(&order)
 
 	if !errors.Is(err, ErrOrderVersionConflict) {
 		t.Fatalf(
 			"expected %v, got %v",
 			ErrOrderVersionConflict,
 			err,
+		)
+	}
+
+	if order.Version != originalVersion {
+		t.Fatalf(
+			"version changed after failed update: expected %d, got %d",
+			originalVersion,
+			order.Version,
 		)
 	}
 }
@@ -292,7 +312,7 @@ func TestMySQLOrderStoreRejectsMissingVersion(t *testing.T) {
 	order := testMySQLOrder()
 	order.Version = 0
 
-	err = store.Update(order)
+	err = store.Update(&order)
 
 	if !errors.Is(err, ErrOrderVersionConflict) {
 		t.Fatalf(

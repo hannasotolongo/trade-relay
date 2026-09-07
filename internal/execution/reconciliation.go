@@ -99,5 +99,5 @@ func (r Reconciler) Reconcile(
 	order.BrokerOrderID = result.OrderID
 	order.FilledQuantity = result.FilledQuantity
 
-	return r.Store.Update(*order)
+	return r.Store.Update(order)
 }

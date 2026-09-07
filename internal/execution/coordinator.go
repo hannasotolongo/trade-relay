@@ -9,7 +9,7 @@ import (
 
 type OrderStore interface {
 	Create(order trading.Order) error
-	Update(order trading.Order) error
+	Update(order *trading.Order) error
 }
 
 type Coordinator struct {
@@ -34,7 +34,7 @@ func (c Coordinator) Submit(
 		return err
 	}
 
-	if err := c.Store.Update(*order); err != nil {
+	if err := c.Store.Update(order); err != nil {
 		return err
 	}
 
@@ -56,7 +56,7 @@ func (c Coordinator) Submit(
 			return transitionErr
 		}
 
-		if updateErr := c.Store.Update(*order); updateErr != nil {
+		if updateErr := c.Store.Update(order); updateErr != nil {
 			return updateErr
 		}
 
@@ -73,5 +73,5 @@ func (c Coordinator) Submit(
 		return err
 	}
 
-	return c.Store.Update(*order)
+	return c.Store.Update(order)
 }

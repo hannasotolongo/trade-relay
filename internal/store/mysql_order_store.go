@@ -143,7 +143,11 @@ func (s *MySQLOrderStore) Get(
 	return order, nil
 }
 
-func (s *MySQLOrderStore) Update(order trading.Order) error {
+func (s *MySQLOrderStore) Update(order *trading.Order) error {
+	if order == nil {
+		return errors.New("nil order")
+	}
+
 	if order.Version <= 0 {
 		return ErrOrderVersionConflict
 	}
@@ -179,6 +183,8 @@ func (s *MySQLOrderStore) Update(order trading.Order) error {
 	if rowsAffected == 0 {
 		return ErrOrderVersionConflict
 	}
+
+	order.Version++
 
 	return nil
 }
