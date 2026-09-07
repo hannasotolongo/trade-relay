@@ -8,8 +8,6 @@ The system receives trading signals, validates and allocates them across followe
 
 TradeRelay uses persistent MySQL order state, stable client order IDs, explicit execution state transitions, optimistic concurrency control, reconciliation, and startup recovery to maintain consistent order state across failures.
 
-> **Current scope:** TradeRelay uses a simulated broker and local MySQL environment to test execution and failure-recovery behavior. It does not currently connect to a live brokerage or execute real trades.
-
 
 ## Results
 
