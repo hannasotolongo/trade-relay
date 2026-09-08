@@ -1,72 +1,85 @@
-# TradeRelay
-TradeRelay is a fault tolerant trade execution backend written in Go for coordinating a single trading decision across multiple brokerage accounts. The system is built around a failure that cannot be solved with a database transaction alone. A external broker may accept an order even when the application never receives or persists the acknowledgement. A timeout, process crash, or database failure can therefore leave local execution state uncertain while a real external side effect has already occurred. TradeRelay treats this uncertainty as a state recovery problem. It creates a durable execution plan before broker submission, assigns stable identities to intended orders, persists explicit execution state, and reconciles ambiguous outcomes against broker state before allowing execution to proceed.
+# Trade Relay
 
-The objective: 
-A retry may repeat an operation, but it must never create a second logical execution for the same intended order. 
+Trade Relay is a failure aware trade execution backend written in Go and MySQL. It coordinates a trading decision across brokerage accounts while preserving execution identity through retries, concurrent processing, ambiguous broker responses, and process interruption.
 
-## The Problem
+The central problem is that local database state and external broker execution cannot be committed atomically. A broker may accept an order even if Trade Relay times out or crashes before recording the acknowledgement. Trade Relay addresses this by persisting execution intent before external submission, using optimistic concurrency to establish a single submission winner, and reconciling uncertain outcomes against broker state before permitting further action.
 
-Trade execution crosses a consistency boundary that the application does not control.
+The project focuses on one question: How can an execution system recover safely when it cannot immediately determine whether an external side effect occurred?
 
-TradeRelay can persist an intended order in MySQL and submit that order to a broker, but those operations cannot participate in the same atomic transaction. Once the broker accepts an order, rolling back local database state cannot reverse the external execution.
+## Failure Boundary
 
-This creates an ambiguous failure window:
+A database transaction can protect Trade Relay's local state, but it cannot include the broker.
 
 ```text
-TradeRelay                         Broker
-    |                                |
-    | persist SUBMITTING             |
-    |                                |
-    |------ submit order ----------->|
-    |                                |
-    |                         order accepted
-    |                                |
-    |<------ acknowledgement --------|
-    |
-    X  process fails before
-       acknowledgement is persisted
+Trade Relay                         Broker
+     |                                |
+     | persist SUBMITTING             |
+     |                                |
+     |------ SubmitOrder ------------>|
+     |                                |
+     |                         order accepted
+     |                                |
+     |<------ acknowledgement --------|
+     |                                |
+     X process crashes
+```
 
-## Hypothesis
+At this point, the database may contain `SUBMITTING` while the broker already contains a live order.
 
-A trade execution system can recover safely from failures that occur after an order may have reached the broker by preserving enough durable state to determine the order's actual outcome before deciding whether it should be submitted again.
+Blindly retrying `SubmitOrder` would be unsafe.
 
-## System Design
+Trade Relay therefore represents uncertainty explicitly and recovers by observing broker state rather than assuming that an interrupted request failed.
 
-TradeRelay separates trade intent from external execution. A trading signal is first converted into an account-level execution plan, and the complete plan is persisted before any broker submission begins.
+## Architecture
 
-Each planned order receives a deterministic identity derived from the signal and target account. Once persisted, that plan becomes the authoritative execution intent for the signal; retries load the existing plan rather than recalculating it from potentially changed account state.
 
-Execution then proceeds from durable state. Orders transition to `SUBMITTING` before crossing the broker boundary. If the outcome becomes uncertain, TradeRelay preserves that uncertainty and requires reconciliation with the broker rather than treating the order as safe to resubmit.
+                    Trading Signal
+                          |
+                          v
+                  Account Allocation
+                          |
+                          v
+                   Execution Plan
+                          |
+                          v
+              Atomic Plan Persistence
+                          |
+                          v
+                  Order Coordinator
+                          |
+              CREATED -> SUBMITTING
+                          |
+                  version-checked
+                     DB update
+                          |
+                          v
+                       Broker
+                          |
+                  external state
+                          |
+             +------------+------------+
+             |                         |
+             v                         v
+       definitive result         ambiguous result
+             |                         |
+             v                         v
+      persist new state             UNKNOWN
+                                       |
+                                       v
+                              Recovery Service
+                                       |
+                                       v
+                              Broker Reconciliation
+                                       |
+                                       v
+                              Persist Recovered State
 
-```text
-Trading Signal
-      |
-      v
-Account Allocation
-      |
-      v
-Execution Plan
-      |
-      v
-Atomic Plan Persistence
-      |
-      v
-Order Execution
-      |
-      +--------> Broker
-      |            |
-      |            v
-      |       External State
-      |            |
-      v            |
-Persistent State <-+
-      ^
-      |
-Reconciliation / Recovery
+
+Trade Relay separates execution intent from external execution. A signal is first converted into an account level execution plan. The complete plan is persisted before any order is allowed to reach the broker. Once persisted, that plan becomes authoritative. A retry loads the existing plan rather than recalculating it from potentially changed account configuration.
 
 ## Execution Lifecycle
 
-TradeRelay represents each order as an explicit state machine. State transitions define what the system knows about an order at each point in execution and determine whether external submission is safe.
+Orders move through explicit states describing what Trade Relay knows about the external execution:
 
 ```text
 CREATED
@@ -74,202 +87,346 @@ CREATED
    v
 SUBMITTING
    |
-   +--------------------+
-   |                    |
-   v                    v
-ACKNOWLEDGED         UNKNOWN
-   |                    |
-   v                    |  reconcile
-PARTIALLY_FILLED        |
-   |                    v
-   v              authoritative
-FILLED             broker state
+   +----------------------+
+   |                      |
+   v                      v
+ACKNOWLEDGED           UNKNOWN
+   |                      |
+   v                      | reconcile
+PARTIALLY_FILLED          |
+   |                      v
+   v                 broker state
+FILLED
 
 REJECTED
 
-**Important definitions for reference when following the project:**
+Terminology to follow throughout the project:
 
-CREATED: The order has been durably planned and persisted but has not yet been submitted to the broker.
-SUBMITTING: Broker submission has begun. The broker may already have received or accepted the order.
-UNKNOWN: The submission outcome is ambiguous. TradeRelay must query the broker before deciding what happened.
-ACKNOWLEDGED: The broker confirms that the order exists and has been accepted for execution.
-PARTIALLY FILLED: The broker reports that only part of the requested quantity has executed.
-FILLED: The broker reports that the entire requested quantity has executed.
-REJECTED: The broker rejected the order.
-Client Order ID: stable identity TradeRelay uses across submission and recovery.
-Broker Order ID: external identity assigned by the broker.
-Signal ID: identifies the original trading decision.
-Execution Plan: the persisted set of account-level orders created from that signal.
+CREATED — execution intent is durably persisted but broker submission has not begun.
+SUBMITTING — the worker has claimed the submission transition and broker interaction may be in progress.
+UNKNOWN — the broker outcome is ambiguous. Another submission is not assumed to be safe.
+ACKNOWLEDGED — the broker confirms that the order exists.
+PARTIALLY_FILLED / FILLED — execution progress reported by the broker.
+REJECTED — submission was definitively rejected.
+
+## Concurrent Submission Control
+
+The important concurrency boundary is placed **before the external broker call**.
+
+Each order contains a monotonically increasing version. A state update succeeds only if the persisted version still matches the version originally read by the caller.
+
+Conceptually:
+
+sql
+UPDATE orders
+SET
+    status = ?,
+    version = version + 1
+WHERE id = ?
+  AND version = ?;
 
 
-## Recovery and Reconciliation
+Consider two workers that independently load the same order:
 
-A broker request can fail without revealing whether the trade itself failed. For example, TradeRelay may submit an order and lose the response after the broker has already accepted it. In that case, submitting the order again would be unsafe because the original order may already exist.
 
-TradeRelay therefore follows a broker first recovery rule:
+MySQL
+Order A
+status  = CREATED
+version = 1
 
-**When submission outcome is ambiguous, observe external broker state before deciding whether another submission is safe.**
+        Worker 1                 Worker 2
+           |                        |
+           | read version 1         | read version 1
+           |                        |
+           v                        v
+     claim SUBMITTING         claim SUBMITTING
+           |                        |
+           +----------+-------------+
+                      |
+                      v
+                 MySQL CAS
+                  /       \
+              succeeds    conflict
+                 |           |
+                 v           X
+            SubmitOrder    STOP
+                 |
+                 v
+               Broker
 
-For unresolved SUBMITTING and UNKNOWN orders, TradeRelay uses the order's stable identity to query the broker rather than immediately calling the submission path again.
 
-Persisted Order
-SUBMITTING / UNKNOWN
-        |
-        v
-Does TradeRelay have
-a Broker Order ID?
-     /       \
-   yes        no
-    |          |
-    v          v
-Lookup by    Lookup by stable
-Broker ID    Client Order ID
-     \         /
-      \       /
-        v   v
-   Broker State
-        |
-        v
-Validate Result
-        |
-        v
-Reconcile Local State
-        |
-        v
-Persist Updated State
+Only the worker that successfully persists CREATED → SUBMITTING may cross the broker boundary. A MySQL integration test creates two independent copies of the same persisted version and releases both submitters concurrently. The broker implementation is instrumented to count actual SubmitOrder calls.
 
-If a broker order ID is already known, reconciliation queries the broker using that identifier. If it is missing, TradeRelay queries using the stable client order ID instead. The returned broker state is validated before local state is changed. TradeRelay rejects inconsistent results such as impossible fill quantities, decreasing filled quantity, or a broker order identity that conflicts with the persisted order. Only after the external state has been observed and validated is the reconciled state persisted back to MySQL. This separates recovery from retry: uncertainty triggers observation first, not another external side effect.
+The tested result is:
 
-## Persistence and Concurrency
-TradeRelay uses MySQL as the authoritative store for execution state. Before broker submission begins, the complete account-level execution plan is persisted atomically.
+successful submitters:      1
+version conflicts:          1
+broker SubmitOrder calls:   1
+final persisted state:      ACKNOWLEDGED
+final persisted version:    3
+
+Broker-side deduplication alone could hide duplicate calls. The test measures the external submission boundary directly.
+
+## Durable Execution Plans
+
+A trading signal may produce orders for multiple brokerage accounts.
+
+Trade Relay persists the complete execution plan before allowing execution to begin:
+
 
 Signal
-   |
-   v
-Build Execution Plan
-   |
-   v
+  |
+  v
+Build Account-Level Orders
+  |
+  v
 BEGIN TRANSACTION
-   |
-   +--> Persist Order A
-   +--> Persist Order B
-   +--> Persist Order C
-   |
-   v
+  |
+  +--> Order A
+  +--> Order B
+  +--> Order C
+  |
+  v
 COMMIT
-   |
-   v
-Broker Execution May Begin
+  |
+  v
+Broker execution may begin
 
-Note: If any order in the plan cannot be persisted, the transaction is rolled back. This prevents execution from beginning with only part of the intended plan durably recorded. Once a plan exists for a signal, subsequent processing loads the persisted plan rather than recalculating it. This prevents retries from changing the original execution intent if account configuration has changed since the signal was first processed.
 
-Optimistic Concurrency
+If any plan write fails, the transaction rolls back. This prevents Trade Relay from executing a partially persisted plan where some intended account orders exist externally while the complete execution intent was never durably recorded. Persisted plans are also reused on retry. Changes to account configuration after plan creation therefore do not silently change an execution decision that has already become durable.
 
-Each persisted order contains a version number. Updates are conditional on the version originally read by the caller.
+## Ambiguous Failure Recovery
 
-UPDATE orders
-SET status = ?, version = version + 1
-WHERE id = ? AND version = ?;
+A failed broker request does not necessarily mean the broker rejected or never received the order.
 
-If two processes attempt to update the same version of an order, only one can successfully advance it. A later stale update no longer matches the persisted version and is rejected as a version conflict.
+For example:
 
-This makes the database update an authoritative commit point for state transitions and prevents stale writers from silently overwriting newer execution state.
+
+SubmitOrder()
+      |
+      v
+Broker accepts order
+      |
+      X response lost
+
+
+Trade Relay cannot safely infer:
+
+
+request failed == trade did not happen
+
+
+Instead, the order remains unresolved and recovery follows a **broker-first rule**:
+
+> When an external outcome is uncertain, observe authoritative broker state before deciding what should happen next.
+
+For `SUBMITTING` and `UNKNOWN` orders:
+
+```text
+Persisted unresolved order
+           |
+           v
+   BrokerOrderID known?
+       /          \
+     yes           no
+      |             |
+      v             v
+ lookup by      lookup by stable
+ broker ID      client order ID
+       \           /
+        \         /
+         v       v
+        Broker State
+             |
+             v
+       Validate Result
+             |
+             v
+      Reconcile State
+             |
+             v
+        Persist Update
+```
+
+If the broker order ID was never persisted, Trade Relay can locate the external order using the stable client-order identity. Recovery therefore does not begin by blindly calling `SubmitOrder` again.
+
+## Broker-State Validation
+
+Broker state is treated as authoritative for external execution, but it is not copied into local state without validation.
+
+Reconciliation rejects results such as:
+
+* a broker order identity that conflicts with the persisted order
+* filled quantity greater than requested quantity
+* filled quantity moving backward
+* status and fill combinations that cannot both be true
+
+Only validated broker state is allowed to advance persisted execution state.
+
+## Recovery Service
+
+Trade Relay can scan durable storage for unresolved orders:
+
+
+MySQL
+ |
+ +--> SUBMITTING
+ |
+ +--> UNKNOWN
+ |
+ v
+Recovery Service
+ |
+ v
+Reconciler
+ |
+ v
+Broker
+ |
+ v
+Recovered Local State
+
+
+This allows an interrupted process to reconstruct unresolved execution from durable state rather than depending on the memory of the process that originally submitted the order. The recovery path has been integration-tested against MySQL with multiple persisted order states.
 
 ## Failure Model
 
-TradeRelay assumes that the application, database, network, and broker can fail independently. Correctness therefore cannot depend on every submission receiving a definitive response or every process completing normally.
+Trade Relay assumes that the application, database, network, and broker can fail independently.
 
-The system is designed around the following failure scenarios:
+| Failure                                | System behavior                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| Concurrent submission                  | Version-conditional transition selects one submission winner before the broker boundary |
+| Stale writer                           | MySQL rejects the update with a version conflict                                        |
+| Plan persistence failure               | Transaction rolls back before broker execution begins                                   |
+| Process interruption                   | Durable order state remains available for recovery                                      |
+| Broker timeout                         | Outcome is treated as ambiguous rather than assumed unsuccessful                        |
+| Lost acknowledgement                   | Broker state can be recovered using stable order identity                               |
+| Duplicate processing                   | Existing durable execution intent is reused                                             |
+| Changed account configuration          | Persisted plan remains authoritative for the original signal                            |
+| Invalid broker state                   | Reconciliation rejects inconsistent external state                                      |
+| `SUBMITTING` / `UNKNOWN` after restart | Recovery service discovers and reconciles unresolved orders                             |
 
-| Failure | Risk |
-|---|---|
-| **Process crash during submission** | The broker may accept an order before TradeRelay persists the result. |
-| **Broker timeout** | TradeRelay cannot determine from the timeout alone whether the order was accepted. |
-| **Lost broker response** | External execution may succeed while local state remains `SUBMITTING` or `UNKNOWN`. |
-| **Duplicate signal or retry** | The same execution intent may enter the system more than once. |
-| **Concurrent processing** | Multiple callers may attempt to act on the same persisted order state. |
-| **Partial plan persistence** | Some account orders could become durable while others are lost before execution begins. |
-| **Stale database update** | A process operating on an older order version could overwrite newer execution state. |
-| **Inconsistent broker state** | A broker response may conflict with locally known identity, quantity, or fill progression. |
+## Tested Properties
 
-These failures are treated as expected operating conditions rather than exceptional cases outside the execution model. TradeRelay's recovery behavior is designed around preserving enough durable information to determine what happened after a failure, rather than assuming that an interrupted operation did not occur.
+Trade Relay is tested at the domain, persistence, concurrency, and recovery boundaries.
 
-## Experimental Method
+The current suite includes:
 
-TradeRelay is evaluated by deliberately introducing failures at critical points in the execution lifecycle and verifying the resulting persisted state, broker state, and recovery behavior.
+* order lifecycle and transition tests
+* allocation tests
+* execution-plan tests
+* plan-executor tests
+* simulated broker tests
+* reconciliation tests
+* broker-first recovery tests
+* SQLMock persistence tests
+* real MySQL integration tests
+* concurrent submission integration testing
+* stale-version conflict testing
+* recovery scanning
+* HTTP API tests
+* Go race-detector execution
 
-The tests focus on whether the system preserves execution identity and converges on the correct order state when normal execution is interrupted.
-
-### Test Scenarios
-
-| Scenario | What Is Tested |
-|---|---|
-| **Concurrent duplicate requests** | Whether repeated processing of the same execution intent creates more than one logical order. |
-| **Plan persistence failure** | Whether broker execution is prevented when the complete execution plan cannot be persisted. |
-| **Persisted-plan retry** | Whether a retry uses the original durable execution plan instead of recalculating execution intent. |
-| **Ambiguous submission** | Whether `SUBMITTING` and `UNKNOWN` orders avoid blind resubmission. |
-| **Lost broker acknowledgement** | Whether an order can be recovered by its stable client order ID when the broker order ID was never persisted. |
-| **Stale concurrent update** | Whether optimistic concurrency rejects a writer operating on an outdated order version. |
-| **Invalid broker state** | Whether inconsistent identities, fill quantities, or fill progression are rejected during reconciliation. |
-| **Startup recovery** | Whether unresolved persisted orders can be discovered and reconciled after execution is interrupted. |
-
-The implementation is tested at multiple boundaries using Go unit tests, concurrency tests, SQLMock persistence tests, MySQL integration tests, and the Go race detector.
+Run the complete suite with:
 
 ```bash
 go test ./...
 go test -race ./...
+```
 
-The objective is not to demonstrate production trading performance. The experiments evaluate the narrower correctness hypothesis which is whether durable intent, stable identity, explicit uncertainty, and reconciliation allow interrupted execution to recover without treating an unknown outcome as safe to resubmit.
+Both suites currently pass.
 
-## Results
+## What the Tests Demonstrate
 
-The current implementation demonstrates the core correctness properties required by the hypothesis under controlled failure and concurrency tests.
+The current implementation demonstrates several specific correctness properties under the tested failure model:
 
-| Experiment | Observed Result |
-|---|---|
-| **Atomic plan persistence** | The complete execution plan committed when all order writes succeeded and rolled back when persistence failed before completion. |
-| **Persisted-plan recovery** | A repeated execution attempt loaded the previously persisted plan rather than recalculating execution intent. |
-| **Ambiguous submission recovery** | An `UNKNOWN` order without a broker order ID was reconciled through its stable client order ID without issuing another broker submission. |
-| **State-aware retry** | Persisted `ACKNOWLEDGED`, `SUBMITTING`, and `UNKNOWN` orders were not blindly resubmitted when the execution plan was processed again. |
-| **Optimistic concurrency** | Version-conditional persistence rejected stale order updates after the persisted version had advanced. |
-| **Recovery discovery** | Persisted `SUBMITTING` and `UNKNOWN` orders were discovered and passed through reconciliation. |
-| **Broker-state validation** | Invalid fill quantities, fill regression, inconsistent status/fill combinations, and conflicting broker identities were rejected during reconciliation. |
-| **Concurrent duplicate identity** | Concurrent attempts using the same logical identity converged on a single stored identity in the tested duplicate-submission path. |
+### 1. Atomic intent before execution
 
-These results support the hypothesis that durable execution intent, stable identity, explicit uncertainty, and broker first reconciliation can preserve logical execution identity across the failure scenarios tested.
-They do not establish exactly once execution, production scale fault tolerance, or production trading performance. Those properties are outside the scope of the current experiments.
+A multi-account execution plan must become durable before broker submission begins. Persistence failure prevents execution from proceeding with only part of the plan recorded.
+
+### 2. Persisted plan reuse
+
+Once a plan exists, retry processing loads that plan instead of silently recalculating execution intent.
+
+### 3. Stale write rejection
+
+A caller operating on an outdated order version cannot overwrite a newer persisted state.
+
+### 4. Single winner submission coordination
+
+Two callers starting from the same persisted order version do not both cross the external broker boundary. The tested race produces one successful state claim, one version conflict, and one broker submission invocation.
+
+### 5. Explicit uncertainty
+
+Ambiguous submission outcomes are represented as unresolved state rather than being interpreted as safe failures.
+
+### 6. Broker-first recovery
+
+An interrupted order can be rediscovered from durable storage and reconciled against broker state, including by stable client-order identity when the broker order ID was never persisted locally.
+
+### 7. Reconciliation invariants
+
+Impossible fill progression and conflicting broker identities are rejected rather than silently incorporated into local execution state.
+
+## Correctness Boundary
+
+Trade Relay does **not** claim universal exactly-once execution.
+
+A local database cannot atomically commit an external brokerage side effect. Instead, the system combines:
+
+
+durable execution intent
+        +
+stable order identity
+        +
+single-winner state transitions
+        +
+broker-side identity
+        +
+explicit uncertain states
+        +
+broker-first reconciliation
+
+
+to make retries and recovery safer across the failure scenarios represented by the current implementation and tests.
+
+the project demonstrates specific failure-handling invariants rather than claiming an end-to-end guarantee that the architecture cannot prove.
 
 ## Repository Structure
-
-TradeRelay separates trading-domain logic, execution coordination, broker behavior, and persistence into distinct packages.
 
 ```text
 trade-relay/
 ├── cmd/
-│   └── traderelay/       # Application entry point and service startup
+│   └── traderelay/       # service entry point
 ├── internal/
-│   ├── allocation/       # Signal-to-account allocation
-│   ├── api/              # HTTP service boundary
-│   ├── broker/           # Broker implementations and simulation
-│   ├── execution/        # Planning, submission, reconciliation, and recovery
-│   ├── store/            # MySQL and in-memory persistence
-│   └── trading/          # Core order, signal, account, and state models
+│   ├── allocation/       # signal-to-account allocation
+│   ├── api/              # HTTP boundary
+│   ├── broker/           # broker interface and simulator
+│   ├── execution/        # planning, submission, reconciliation, recovery
+│   ├── store/            # MySQL persistence
+│   └── trading/          # domain models and order lifecycle
 ├── migrations/           # MySQL schema
 ├── go.mod
 └── README.md
+```
 
-## Running and Testing
+## Running Locally
 
-TradeRelay requires Go and a running MySQL instance with the project migration applied.
+Trade Relay requires Go and MySQL with the project schema applied.
 
-Set the MySQL connection string and start the service:
+Set the application database connection:
 
 ```bash
-export TRADERELAY_DB_DSN='root@tcp(127.0.0.1:3307)/trade_relay?parseTime=true'
+export TRADERELAY_DB_DSN='root@unix(/tmp/mysql.sock)/trade_relay?parseTime=true'
+```
+
+Start the service:
+
+```bash
 go run ./cmd/traderelay
 ```
 
-Verify that the service is running:
+Verify the HTTP service:
 
 ```bash
 curl http://localhost:8080/healthz
@@ -281,28 +438,22 @@ Expected response:
 {"status":"ok"}
 ```
 
-Run the test suite:
+MySQL integration tests use:
+
+```bash
+export TRADERELAY_MYSQL_DSN='root@unix(/tmp/mysql.sock)/trade_relay?parseTime=true'
+```
+
+Then:
 
 ```bash
 go test ./...
 go test -race ./...
 ```
 
-## Future Work
+The exact DSN will vary by local MySQL configuration.
 
-The next phase of TradeRelay will focus on strengthening the correctness claims under more adversarial execution conditions.
+## Current Scope and Limitations
 
-The immediate priority is validating concurrent first execution races and multiple processes attempting to create, load, and advance the same execution plan while competing for the same persisted order state. Additional failure injection will target crashes at each persistence and broker boundary to verify that recovery converges without unsafe resubmission.
-
-Later experiments will extend the broker simulator with delayed and out-of-order responses, partial fills, broker unavailability, and controlled network failures. Performance evaluation will then measure execution latency, recovery time, throughput, and behavior under sustained concurrent load.
-
-A real broker adapter would be introduced only after these correctness properties are more extensively validated against the simulated failure model.
-
-## Current Limitations
-
-TradeRelay is an experimental execution backend designed to evaluate correctness and recovery behavior rather than production trading performance. Broker execution is currently modeled through a stateful simulator, and durable execution state is maintained through a single MySQL instance. The system has not been validated against a live brokerage API, distributed database topology, or real money execution environment.
-
-The current experiments establish specific recovery and persistence properties, but they do not establish exactly once execution. In particular, stronger end-to-end testing is still required for simultaneous execution attempts where multiple processes compete to advance the same order toward broker submission. Optimistic concurrency protects persisted state in this path, but the complete broker-execution race has not yet been demonstrated under all relevant interleavings.
-
-Recovery is also currently sequential, and the system has not been evaluated under sustained load. Throughput, latency, saturation behavior, distributed recovery, database failover, and production-scale broker behavior therefore remain outside the scope of the current results.
+Trade Relay is an experimental backend for studying correctness at the boundary between durable local state and external trade execution. The current implementation uses a deterministic broker simulator and a single MySQL instance. It has not been validated against a live brokerage API, distributed database topology, or real money execution environment. The concurrency tests establish the tested single-winner submission invariant for callers competing from the same persisted version. They do not prove correctness under every possible distributed-system interleaving or infrastructure failure. Recovery currently runs sequentially, and the project has not been benchmarked for production throughput, latency, saturation behavior, database failover, or large scale recovery. Authentication, authorization, secrets management, trading risk controls, production observability, and operational safeguards required for a real-money system are also outside the current scope.
 
